@@ -11,6 +11,8 @@ PROCESSED_DATA_DIR = DATA_DIR / "processed"
 LOGS_DIR = BASE_DIR / "logs"
 
 
+# DEFRA Wholesale fruit and vegetable prices
+
 DEFRA_PRICES_PAGE_URL = (
     "https://www.gov.uk/government/statistical-data-sets/"
     "wholesale-fruit-and-vegetable-prices-weekly-average"
@@ -61,4 +63,26 @@ SELECTED_PRODUCTS = [
     ("spring_greens", "prepacked", "kg"),
     ("swede", "swede", "kg"),
     ("turnip", "turnip", "kg"),
+]
+
+
+# Open-Meteo Historical Weather API
+
+OPEN_METEO_URL = (
+    "https://archive-api.open-meteo.com/v1/archive"
+)
+
+WEATHER_START_DATE = "2017-11-03"
+
+WEATHER_LOCATIONS = {
+    "Norwich": (52.6309, 1.2974),
+    "Ely": (52.3995, 0.2624),
+    "Colchester": (51.8959, 0.8919),
+}
+
+WEATHER_FIELDS = [
+    "temperature_2m_mean",
+    "temperature_2m_min",
+    "temperature_2m_max",
+    "precipitation_sum",
 ]
