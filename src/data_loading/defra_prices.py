@@ -12,6 +12,33 @@ from config.settings import (
 )
 
 
+def find_csv_url():
+    """Находит ссылку на актуальный CSV на странице DEFRA."""
+
+    response = requests.get(
+        DEFRA_PRICES_PAGE_URL,
+        timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
+
+    for link in soup.find_all("a", href=True):
+        text = " ".join(link.stripped_strings).lower()
+
+        if "machine-readable" in text:
+            return urljoin(
+                DEFRA_PRICES_PAGE_URL,
+                link["href"]
+            )
+
+    raise RuntimeError(
+        "На странице DEFRA не найден machine-readable CSV."
+    )
+
 def load_defra_prices():
     csv_url = find_csv_url()
 
