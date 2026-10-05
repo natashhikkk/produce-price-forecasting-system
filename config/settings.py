@@ -86,3 +86,16 @@ WEATHER_FIELDS = [
     "temperature_2m_max",
     "precipitation_sum",
 ]
+
+
+# UK Weekly Road Fuel Prices
+
+FUEL_PRICES_PAGE_URL = (
+    "https://www.gov.uk/government/statistics/"
+    "weekly-road-fuel-prices"
+)
+
+FUEL_REQUIRED_COLUMNS = [
+    "Date",
+    "ULSD (Ultra low sulphur diesel) Pump price in pence/litre",
+]
