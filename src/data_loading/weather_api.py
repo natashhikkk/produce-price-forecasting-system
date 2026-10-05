@@ -57,3 +57,17 @@ def load_weather(end_date=None):
         weather_parts,
         ignore_index=True,
     )
+if __name__ == "__main__":
+    weather = load_weather(
+        end_date="2026-09-14"
+    )
+
+    print(weather.head())
+    print()
+    print("Размер:", weather.shape)
+
+    print()
+    print(
+        weather.groupby("location")
+        .size()
+    )

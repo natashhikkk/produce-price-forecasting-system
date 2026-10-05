@@ -69,3 +69,11 @@ def load_defra_prices():
         )
 
     return df
+
+if __name__ == "__main__":
+    df = load_defra_prices()
+
+    print(df.head())
+    print()
+    print("Размер:", df.shape)
+    print("Столбцы:", df.columns.tolist())
