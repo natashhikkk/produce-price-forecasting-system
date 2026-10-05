@@ -11,6 +11,17 @@ PROCESSED_DATA_DIR = DATA_DIR / "processed"
 LOGS_DIR = BASE_DIR / "logs"
 LOAD_LOG_FILE = LOGS_DIR / "load_log.csv"
 
+
+# Файлы исходных данных
+DEFRA_RAW_FILE = RAW_DATA_DIR / "defra_prices.csv"
+WEATHER_RAW_FILE = RAW_DATA_DIR / "weather.csv"
+DIESEL_RAW_FILE = RAW_DATA_DIR / "diesel_prices.csv"
+FERTILISER_RAW_FILE = RAW_DATA_DIR / "fertiliser_index.csv"
+
+# Журнал загрузок
+LOAD_LOG_FILE = LOGS_DIR / "load_log.csv"
+
+
 # DEFRA Wholesale fruit and vegetable prices
 
 DEFRA_PRICES_PAGE_URL = (
