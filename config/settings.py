@@ -99,3 +99,18 @@ FUEL_REQUIRED_COLUMNS = [
     "Date",
     "ULSD (Ultra low sulphur diesel) Pump price in pence/litre",
 ]
+
+
+# DEFRA Agricultural Price Index
+
+AGRICULTURAL_PRICE_INDEX_PAGE_URL = (
+    "https://www.gov.uk/government/statistics/"
+    "agricultural-price-indices"
+)
+
+AGRICULTURAL_PRICE_INDEX_REQUIRED_COLUMNS = [
+    "type",
+    "category",
+    "date",
+    "index",
+]
