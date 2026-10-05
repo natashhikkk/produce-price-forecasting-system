@@ -125,3 +125,13 @@ AGRICULTURAL_PRICE_INDEX_REQUIRED_COLUMNS = [
     "date",
     "index",
 ]
+
+
+
+# Предобработка данных
+
+PERIOD_ORIGIN_DATE = "2017-11-03"
+
+PRICES_PROCESSED_FILE = (
+    PROCESSED_DATA_DIR / "prices_14d.csv"
+)
