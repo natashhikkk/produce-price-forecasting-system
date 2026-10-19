@@ -187,67 +187,52 @@ def analyze_external_factors(df):
     )
 
 
-def run_analysis(df):
+def run_analysis(df, verbose=True):
     df = df.copy()
+    df["period_start"] = pd.to_datetime(df["period_start"])
 
-    df["period_start"] = pd.to_datetime(
-        df["period_start"]
-    )
+    missing, common_missing = analyze_missing_values(df)
+    statistics = descriptive_statistics(df)
+    trend = analyze_trend(df)
+    seasonality = analyze_seasonality(df)
+    anomalies = detect_anomalies(df)
+    correlations = analyze_external_factors(df)
 
-    print("АНАЛИЗ ДАННЫХ")
+    results = {
+        "missing": missing,
+        "common_missing": common_missing,
+        "statistics": statistics,
+        "trend": trend,
+        "seasonality": seasonality,
+        "anomalies": anomalies,
+        "correlations": correlations,
+    }
 
-    print("\nОбщая информация")
-    print("Размер:", df.shape)
-    print(
-        "Период:",
-        df["period_start"].min(),
-        "—",
-        df["period_start"].max(),
-    )
-    print(
-        "Товарных позиций:",
-        df["item"].nunique(),
-    )
+    if verbose:
+        print("АНАЛИЗ ДАННЫХ")
 
-    missing, common_missing = (
-        analyze_missing_values(df)
-    )
+        print("\nПропуски:")
+        print(missing.to_string())
 
-    print("\nПропуски цены")
-    print(missing)
+        print("\nОбщие пропущенные периоды:")
+        print(common_missing.to_string(index=False))
 
-    print(
-        "\nПериодов без цен по всем товарам:",
-        len(common_missing),
-    )
+        print("\nОписательная статистика:")
+        print(statistics.to_string(index=False))
 
-    if len(common_missing) > 0:
-        print(
-            pd.Series(common_missing)
-            .dt.strftime("%Y-%m-%d")
-            .to_string(index=False)
-        )
+        print("\nТренд:")
+        print(trend.to_string(index=False))
 
-    print("\nОписательная статистика")
-    print(descriptive_statistics(df))
+        print("\nСезонность:")
+        print(seasonality.to_string(index=False))
 
-    print("\nОценка тренда")
-    print(analyze_trend(df))
+        print("\nПотенциальные аномалии:")
+        print(anomalies.to_string(index=False))
 
-    print("\nСезонность")
-    print(analyze_seasonality(df))
+        print("\nКорреляции с внешними факторами:")
+        print(correlations.to_string())
 
-    print("\nПотенциальные аномалии")
-    print(detect_anomalies(df))
-
-    print(
-        "\nКорреляция цены с внешними "
-        "факторами предыдущего периода"
-    )
-    print(
-        analyze_external_factors(df).to_string()
-    )
-
+    return results
 
 if __name__ == "__main__":
     data = pd.read_csv(

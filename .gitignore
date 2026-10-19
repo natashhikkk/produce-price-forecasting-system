@@ -224,3 +224,5 @@ logs/*.csv
 
 
 data/results/*.csv
+
+data/results/figures/*.png

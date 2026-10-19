@@ -358,6 +358,38 @@ def external_factor_comparison(metrics):
 
     return table.round(2)
 
+def run_forecasting(df, save_results=True):
+    data, model_start = prepare_data(df)
+
+    metrics = evaluate_models(data)
+    best = get_best_models(metrics)
+    forecasts = create_forecasts(data, metrics)
+
+    if save_results:
+        MODEL_METRICS_FILE.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        metrics.to_csv(
+            MODEL_METRICS_FILE,
+            index=False,
+            encoding="utf-8-sig",
+        )
+
+        forecasts.to_csv(
+            FORECASTS_FILE,
+            index=False,
+            encoding="utf-8-sig",
+        )
+
+    return {
+        "model_start": model_start,
+        "metrics": metrics,
+        "best_models": best,
+        "forecasts": forecasts,
+    }
+
 
 if __name__ == "__main__":
     source_data = pd.read_csv(
