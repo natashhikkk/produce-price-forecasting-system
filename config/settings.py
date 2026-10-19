@@ -1,45 +1,47 @@
 from pathlib import Path
 
 
-# Корневая папка проекта
 BASE_DIR = Path(__file__).resolve().parents[1]
 
-# Папки с данными
 DATA_DIR = BASE_DIR / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
+RESULTS_DIR = DATA_DIR / "results"
 LOGS_DIR = BASE_DIR / "logs"
-LOAD_LOG_FILE = LOGS_DIR / "load_log.csv"
 
 
-# Файлы исходных данных
-DEFRA_RAW_FILE = RAW_DATA_DIR / "defra_prices.csv"
+DEFRA_RAW_FILE = RAW_DATA_DIR / "defra_prices_latest.csv"
 WEATHER_RAW_FILE = RAW_DATA_DIR / "weather.csv"
 DIESEL_RAW_FILE = RAW_DATA_DIR / "diesel_prices.csv"
 FERTILISER_RAW_FILE = RAW_DATA_DIR / "fertiliser_index.csv"
 
-# Журнал загрузок
-LOAD_LOG_FILE = LOGS_DIR / "load_log.csv"
+ANALYSIS_DATASET_FILE = (
+    PROCESSED_DATA_DIR / "analysis_dataset.csv"
+)
+
+MODEL_METRICS_FILE = (
+    RESULTS_DIR / "model_metrics.csv"
+)
+
+FORECASTS_FILE = (
+    RESULTS_DIR / "forecasts.csv"
+)
+
+LOAD_LOG_FILE = (
+    LOGS_DIR / "load_log.csv"
+)
 
 
-# DEFRA Wholesale fruit and vegetable prices
+REQUEST_TIMEOUT = 60
+
+PERIOD_ORIGIN_DATE = "2017-11-03"
+
 
 DEFRA_PRICES_PAGE_URL = (
     "https://www.gov.uk/government/statistical-data-sets/"
     "wholesale-fruit-and-vegetable-prices-weekly-average"
 )
 
-# Последняя исходная версия файла
-DEFRA_RAW_FILE = RAW_DATA_DIR / "defra_prices_latest.csv"
-
-# Накопленная история
-DEFRA_HISTORY_FILE = PROCESSED_DATA_DIR / "defra_prices_history.csv"
-
-# Таймаут сетевого запроса
-REQUEST_TIMEOUT = 60
-
-
-# Обязательные столбцы источника
 DEFRA_REQUIRED_COLUMNS = [
     "category",
     "item",
@@ -47,15 +49,6 @@ DEFRA_REQUIRED_COLUMNS = [
     "date",
     "price",
     "unit",
-]
-
-# Ключ, однозначно определяющий наблюдение
-DEFRA_KEY_COLUMNS = [
-    "category",
-    "item",
-    "variety",
-    "unit",
-    "date",
 ]
 
 SELECTED_PRODUCTS = [
@@ -77,13 +70,11 @@ SELECTED_PRODUCTS = [
 ]
 
 
-# Open-Meteo Historical Weather API
-
 OPEN_METEO_URL = (
     "https://archive-api.open-meteo.com/v1/archive"
 )
 
-WEATHER_START_DATE = "2017-11-03"
+WEATHER_START_DATE = PERIOD_ORIGIN_DATE
 
 WEATHER_LOCATIONS = {
     "Norwich": (52.6309, 1.2974),
@@ -99,8 +90,6 @@ WEATHER_FIELDS = [
 ]
 
 
-# UK Weekly Road Fuel Prices
-
 FUEL_PRICES_PAGE_URL = (
     "https://www.gov.uk/government/statistics/"
     "weekly-road-fuel-prices"
@@ -111,8 +100,6 @@ FUEL_REQUIRED_COLUMNS = [
     "ULSD (Ultra low sulphur diesel) Pump price in pence/litre",
 ]
 
-
-# DEFRA Agricultural Price Index
 
 AGRICULTURAL_PRICE_INDEX_PAGE_URL = (
     "https://www.gov.uk/government/statistics/"
@@ -126,25 +113,4 @@ AGRICULTURAL_PRICE_INDEX_REQUIRED_COLUMNS = [
     "index",
 ]
 
-
-
-# Предобработка данных
-
-ANALYSIS_DATASET_FILE = (
-    PROCESSED_DATA_DIR / "analysis_dataset.csv"
-)
-
-PERIOD_ORIGIN_DATE = "2017-11-03"
-
 FERTILISER_PUBLICATION_LAG_MONTHS = 2
-
-
-RESULTS_DIR = DATA_DIR / "results"
-
-MODEL_METRICS_FILE = (
-    RESULTS_DIR / "model_metrics.csv"
-)
-
-FORECASTS_FILE = (
-    RESULTS_DIR / "forecasts.csv"
-)

@@ -1,16 +1,15 @@
+import numpy as np
 import pandas as pd
 
 from config.settings import ANALYSIS_DATASET_FILE
 
 
-EXTERNAL_FACTORS = [
-    "temperature_mean",
-    "temperature_min",
-    "temperature_max",
-    "precipitation_sum",
-    "diesel_price",
-    "fertiliser_index",
-]
+EXTERNAL_FACTORS = {
+    "temperature_mean": 2,
+    "precipitation_sum": 2,
+    "diesel_price": 2,
+    "fertiliser_index": 1,
+}
 
 
 def analyze_missing_values(df):
@@ -19,24 +18,21 @@ def analyze_missing_values(df):
         .agg(total="size", available="count")
     )
 
-    result["missing"] = (
-        result["total"] - result["available"]
-    )
-
+    result["missing"] = result["total"] - result["available"]
     result["missing_pct"] = (
-        result["missing"]
-        / result["total"]
-        * 100
+        result["missing"] / result["total"] * 100
     ).round(2)
 
-    common_missing = (
+    missing_periods = (
         df.groupby("period_start")["price"]
         .apply(lambda x: x.isna().all())
     )
 
-    common_missing = common_missing[
-        common_missing
-    ].index
+    common_missing = pd.DataFrame({
+        "period_start": missing_periods[
+            missing_periods
+        ].index
+    })
 
     return result, common_missing
 
@@ -60,28 +56,30 @@ def analyze_trend(df):
     rows = []
 
     for item, data in df.groupby("item"):
-        prices = (
-            data["price"]
-            .dropna()
-            .reset_index(drop=True)
+        data = (
+            data.dropna(subset=["price"])
+            .sort_values("period_start")
         )
 
-        x = pd.Series(
-            range(len(prices)),
-            dtype=float,
-        )
+        if len(data) < 2:
+            slope = np.nan
+            annual_change = np.nan
+        else:
+            periods = (
+                (data["period_start"] - data["period_start"].iloc[0])
+                .dt.days
+                / 14
+            )
 
-        slope = (
-            x.cov(prices) / x.var()
-            if len(prices) > 1
-            else 0
-        )
+            slope = np.polyfit(
+                periods,
+                data["price"],
+                1,
+            )[0]
 
-        annual_change = (
-            slope * 26 / prices.mean() * 100
-            if prices.mean() != 0
-            else 0
-        )
+            annual_change = (
+                slope * 26 / data["price"].mean() * 100
+            )
 
         rows.append({
             "item": item,
@@ -92,40 +90,38 @@ def analyze_trend(df):
     return (
         pd.DataFrame(rows)
         .set_index("item")
-        .round(2)
+        .round({
+            "trend_per_period": 4,
+            "annual_trend_pct": 2,
+        })
     )
 
 
 def analyze_seasonality(df):
-    data = df.dropna(
-        subset=["price"]
-    ).copy()
-
-    data["month"] = (
-        data["period_start"].dt.month
-    )
+    data = df.dropna(subset=["price"]).copy()
+    data["month"] = data["period_start"].dt.month
 
     monthly = (
-        data.groupby(
-            ["item", "month"],
-            as_index=False,
-        )["price"]
+        data.groupby(["item", "month"])["price"]
         .mean()
+        .reset_index()
     )
 
-    max_month = monthly.loc[
-        monthly.groupby("item")["price"].idxmax()
-    ][["item", "month"]]
+    highest = monthly.loc[
+        monthly.groupby("item")["price"].idxmax(),
+        ["item", "month"],
+    ]
 
-    min_month = monthly.loc[
-        monthly.groupby("item")["price"].idxmin()
-    ][["item", "month"]]
+    lowest = monthly.loc[
+        monthly.groupby("item")["price"].idxmin(),
+        ["item", "month"],
+    ]
 
     return (
-        max_month
+        highest
         .rename(columns={"month": "highest_price_month"})
         .merge(
-            min_month.rename(
+            lowest.rename(
                 columns={"month": "lowest_price_month"}
             ),
             on="item",
@@ -144,12 +140,9 @@ def detect_anomalies(df):
         q3 = prices.quantile(0.75)
         iqr = q3 - q1
 
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-
         anomalies = (
-            (prices < lower)
-            | (prices > upper)
+            (prices < q1 - 1.5 * iqr)
+            | (prices > q3 + 1.5 * iqr)
         ).sum()
 
         rows.append({
@@ -164,18 +157,15 @@ def analyze_external_factors(df):
     rows = []
 
     for item, data in df.groupby("item"):
-        data = (
-            data
-            .sort_values("period_start")
-            .copy()
-        )
+        data = data.sort_values("period_start")
 
         row = {"item": item}
 
-        for factor in EXTERNAL_FACTORS:
-            row[factor] = (
-                data["price"]
-                .corr(data[factor].shift(1))
+        for factor, lag in EXTERNAL_FACTORS.items():
+            row[f"{factor}_lag_{lag}"] = (
+                data["price"].corr(
+                    data[factor].shift(lag)
+                )
             )
 
         rows.append(row)
@@ -218,21 +208,22 @@ def run_analysis(df, verbose=True):
         print(common_missing.to_string(index=False))
 
         print("\nОписательная статистика:")
-        print(statistics.to_string(index=False))
+        print(statistics.to_string())
 
         print("\nТренд:")
-        print(trend.to_string(index=False))
+        print(trend.to_string())
 
         print("\nСезонность:")
-        print(seasonality.to_string(index=False))
+        print(seasonality.to_string())
 
         print("\nПотенциальные аномалии:")
-        print(anomalies.to_string(index=False))
+        print(anomalies.to_string())
 
         print("\nКорреляции с внешними факторами:")
         print(correlations.to_string())
 
     return results
+
 
 if __name__ == "__main__":
     data = pd.read_csv(

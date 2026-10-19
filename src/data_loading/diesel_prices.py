@@ -13,7 +13,7 @@ from config.settings import (
 
 
 def find_fuel_csv_urls():
-    """Находит ссылки на оба CSV с ценами топлива."""
+    """Находит архивный и текущий CSV цен топлива."""
 
     response = requests.get(
         FUEL_PRICES_PAGE_URL,
@@ -21,11 +21,7 @@ def find_fuel_csv_urls():
     )
     response.raise_for_status()
 
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser",
-    )
-
+    soup = BeautifulSoup(response.text, "html.parser")
     urls = {}
 
     for link in soup.find_all("a", href=True):
@@ -49,7 +45,7 @@ def find_fuel_csv_urls():
                 link["href"],
             )
 
-    if "archive" not in urls or "current" not in urls:
+    if len(urls) != 2:
         raise RuntimeError(
             "Не удалось найти оба CSV с ценами топлива."
         )
@@ -58,35 +54,26 @@ def find_fuel_csv_urls():
 
 
 def load_diesel_prices():
-    """Получает архивные и актуальные данные о ценах топлива."""
-
-    urls = find_fuel_csv_urls()
+    """Загружает архивные и текущие данные цен топлива."""
 
     parts = []
 
-    for source, url in urls.items():
-
+    for source, url in find_fuel_csv_urls().items():
         response = requests.get(
             url,
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
 
-        df = pd.read_csv(
-            BytesIO(response.content),
-        )
+        df = pd.read_csv(BytesIO(response.content))
 
-        # Удаляем возможный BOM из названия первого столбца
         df.columns = df.columns.str.replace(
             "\ufeff",
             "",
             regex=False,
         )
 
-        missing = (
-            set(FUEL_REQUIRED_COLUMNS)
-            - set(df.columns)
-        )
+        missing = set(FUEL_REQUIRED_COLUMNS) - set(df.columns)
 
         if missing:
             raise ValueError(
@@ -100,10 +87,7 @@ def load_diesel_prices():
 
         parts.append(df)
 
-    return pd.concat(
-        parts,
-        ignore_index=True,
-    )
+    return pd.concat(parts, ignore_index=True)
 
 
 if __name__ == "__main__":

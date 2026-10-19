@@ -13,18 +13,15 @@ from config.settings import (
 
 
 def find_csv_url():
-    """Находит ссылку на актуальный CSV на странице DEFRA."""
+    """Находит актуальный machine-readable CSV DEFRA."""
 
     response = requests.get(
         DEFRA_PRICES_PAGE_URL,
-        timeout=REQUEST_TIMEOUT
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
 
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser"
-    )
+    soup = BeautifulSoup(response.text, "html.parser")
 
     for link in soup.find_all("a", href=True):
         text = " ".join(link.stripped_strings).lower()
@@ -32,31 +29,26 @@ def find_csv_url():
         if "machine-readable" in text:
             return urljoin(
                 DEFRA_PRICES_PAGE_URL,
-                link["href"]
+                link["href"],
             )
 
     raise RuntimeError(
         "На странице DEFRA не найден machine-readable CSV."
     )
 
+
 def load_defra_prices():
-    csv_url = find_csv_url()
+    """Загружает данные оптовых цен DEFRA."""
 
     response = requests.get(
-        csv_url,
-        timeout=REQUEST_TIMEOUT
+        find_csv_url(),
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
 
-    df = pd.read_csv(
-        BytesIO(response.content)
-    )
+    df = pd.read_csv(BytesIO(response.content))
 
-    # Проверяем только структуру
-    missing = (
-        set(DEFRA_REQUIRED_COLUMNS)
-        - set(df.columns)
-    )
+    missing = set(DEFRA_REQUIRED_COLUMNS) - set(df.columns)
 
     if missing:
         raise ValueError(
@@ -64,11 +56,10 @@ def load_defra_prices():
         )
 
     if df.empty:
-        raise ValueError(
-            "Получен пустой файл DEFRA."
-        )
+        raise ValueError("Получен пустой файл DEFRA.")
 
     return df
+
 
 if __name__ == "__main__":
     df = load_defra_prices()

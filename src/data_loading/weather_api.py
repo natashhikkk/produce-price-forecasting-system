@@ -13,17 +13,16 @@ from config.settings import (
 
 
 def load_weather(end_date=None):
-    """Получает ежедневные погодные данные через Open-Meteo API."""
+    """Загружает ежедневные погодные данные Open-Meteo."""
 
     if end_date is None:
         end_date = (
             date.today() - timedelta(days=5)
         ).isoformat()
 
-    weather_parts = []
+    parts = []
 
     for location, (lat, lon) in WEATHER_LOCATIONS.items():
-
         params = {
             "latitude": lat,
             "longitude": lon,
@@ -38,7 +37,6 @@ def load_weather(end_date=None):
             params=params,
             timeout=REQUEST_TIMEOUT,
         )
-
         response.raise_for_status()
 
         data = response.json()
@@ -49,14 +47,26 @@ def load_weather(end_date=None):
             )
 
         df = pd.DataFrame(data["daily"])
+
+        required = {"time", *WEATHER_FIELDS}
+        missing = required - set(df.columns)
+
+        if missing:
+            raise ValueError(
+                f"Для {location} отсутствуют столбцы: {missing}"
+            )
+
+        if df.empty:
+            raise ValueError(
+                f"Получены пустые погодные данные для {location}."
+            )
+
         df["location"] = location
+        parts.append(df)
 
-        weather_parts.append(df)
+    return pd.concat(parts, ignore_index=True)
 
-    return pd.concat(
-        weather_parts,
-        ignore_index=True,
-    )
+
 if __name__ == "__main__":
     weather = load_weather(
         end_date="2026-09-14"
@@ -65,9 +75,5 @@ if __name__ == "__main__":
     print(weather.head())
     print()
     print("Размер:", weather.shape)
-
     print()
-    print(
-        weather.groupby("location")
-        .size()
-    )
+    print(weather.groupby("location").size())

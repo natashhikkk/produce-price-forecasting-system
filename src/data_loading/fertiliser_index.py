@@ -21,10 +21,7 @@ def find_index_csv_url(session):
     )
     response.raise_for_status()
 
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser",
-    )
+    soup = BeautifulSoup(response.text, "html.parser")
 
     for link in soup.find_all("a", href=True):
         text = " ".join(link.stripped_strings).lower()
@@ -45,24 +42,18 @@ def find_index_csv_url(session):
 
 
 def load_agricultural_price_index():
-    """Получает данные Agricultural Price Index."""
+    """Загружает Agricultural Price Index."""
 
     session = requests.Session()
-
-    # Не используем системные настройки прокси
     session.trust_env = False
 
-    csv_url = find_index_csv_url(session)
-
     response = session.get(
-        csv_url,
+        find_index_csv_url(session),
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
 
-    df = pd.read_csv(
-        BytesIO(response.content),
-    )
+    df = pd.read_csv(BytesIO(response.content))
 
     missing = (
         set(AGRICULTURAL_PRICE_INDEX_REQUIRED_COLUMNS)

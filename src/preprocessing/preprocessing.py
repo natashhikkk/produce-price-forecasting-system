@@ -3,9 +3,20 @@ import pandas as pd
 from config.settings import (
     SELECTED_PRODUCTS,
     PERIOD_ORIGIN_DATE,
+    WEATHER_FIELDS,
+    WEATHER_LOCATIONS,
     FUEL_REQUIRED_COLUMNS,
     FERTILISER_PUBLICATION_LAG_MONTHS,
 )
+
+
+ORIGIN = pd.Timestamp(PERIOD_ORIGIN_DATE)
+PRODUCT_KEY = ["item", "variety", "unit"]
+
+
+def get_period_start(dates):
+    days = (dates - ORIGIN).dt.days
+    return ORIGIN + pd.to_timedelta((days // 14) * 14, unit="D")
 
 
 def prepare_prices(df):
@@ -15,49 +26,35 @@ def prepare_prices(df):
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
     for column in ["category", "item", "variety", "unit"]:
-        df[column] = (
-            df[column]
-            .astype("string")
-            .str.strip()
-            .str.lower()
-        )
+        df[column] = df[column].astype("string").str.strip().str.lower()
 
     selected = pd.DataFrame(
         SELECTED_PRODUCTS,
-        columns=["item", "variety", "unit"],
+        columns=PRODUCT_KEY,
     )
 
-    df = df.merge(
-        selected,
-        on=["item", "variety", "unit"],
-        how="inner",
-    )
+    df = df.merge(selected, on=PRODUCT_KEY, how="inner")
+    df = df.dropna(subset=["date", "price", "category"])
+    df = df[df["price"] > 0].drop_duplicates()
 
-    df = (
-        df.dropna(subset=["date", "price"])
-        .query("price > 0")
+    available = set(
+        df[PRODUCT_KEY]
         .drop_duplicates()
+        .itertuples(index=False, name=None)
     )
 
-    origin = pd.Timestamp(PERIOD_ORIGIN_DATE)
+    missing = set(SELECTED_PRODUCTS) - available
 
-    df["period_start"] = (
-        origin
-        + pd.to_timedelta(
-            ((df["date"] - origin).dt.days // 14) * 14,
-            unit="D",
+    if missing:
+        raise ValueError(
+            f"Нет данных для товарных позиций: {sorted(missing)}"
         )
-    )
+
+    df["period_start"] = get_period_start(df["date"])
 
     return (
         df.groupby(
-            [
-                "category",
-                "item",
-                "variety",
-                "unit",
-                "period_start",
-            ],
+            ["category", *PRODUCT_KEY, "period_start"],
             as_index=False,
         )
         .agg(
@@ -71,26 +68,14 @@ def prepare_weather(df):
     df = df.copy()
 
     df["time"] = pd.to_datetime(df["time"], errors="coerce")
-
-    weather_columns = [
-        "temperature_2m_mean",
-        "temperature_2m_min",
-        "temperature_2m_max",
-        "precipitation_sum",
-    ]
-
-    df[weather_columns] = df[weather_columns].apply(
+    df[WEATHER_FIELDS] = df[WEATHER_FIELDS].apply(
         pd.to_numeric,
         errors="coerce",
     )
 
     df = (
-        df.dropna(
-            subset=["time", "location"] + weather_columns
-        )
-        .drop_duplicates(
-            subset=["time", "location"]
-        )
+        df.dropna(subset=["time", "location", *WEATHER_FIELDS])
+        .drop_duplicates(["time", "location"], keep="last")
     )
 
     daily = (
@@ -100,18 +85,15 @@ def prepare_weather(df):
             temperature_min=("temperature_2m_min", "mean"),
             temperature_max=("temperature_2m_max", "mean"),
             precipitation=("precipitation_sum", "mean"),
+            locations=("location", "nunique"),
         )
     )
 
-    origin = pd.Timestamp(PERIOD_ORIGIN_DATE)
+    daily = daily[
+        daily["locations"] == len(WEATHER_LOCATIONS)
+    ].copy()
 
-    daily["period_start"] = (
-        origin
-        + pd.to_timedelta(
-            ((daily["time"] - origin).dt.days // 14) * 14,
-            unit="D",
-        )
-    )
+    daily["period_start"] = get_period_start(daily["time"])
 
     weather = (
         daily.groupby("period_start", as_index=False)
@@ -120,22 +102,20 @@ def prepare_weather(df):
             temperature_min=("temperature_min", "mean"),
             temperature_max=("temperature_max", "mean"),
             precipitation_sum=("precipitation", "sum"),
-            days_count=("time", "count"),
+            days=("time", "count"),
         )
     )
 
     return (
-        weather[weather["days_count"] == 14]
-        .drop(columns="days_count")
+        weather[weather["days"] == 14]
+        .drop(columns="days")
         .reset_index(drop=True)
     )
 
 
 def prepare_diesel(df):
     df = df.copy()
-
-    date_column = "Date"
-    diesel_column = FUEL_REQUIRED_COLUMNS[1]
+    date_column, diesel_column = FUEL_REQUIRED_COLUMNS
 
     df[date_column] = pd.to_datetime(
         df[date_column],
@@ -150,26 +130,15 @@ def prepare_diesel(df):
 
     df = (
         df.dropna(subset=[date_column, diesel_column])
-        .drop_duplicates(subset=[date_column])
+        .drop_duplicates(date_column, keep="last")
     )
 
-    origin = pd.Timestamp(PERIOD_ORIGIN_DATE)
-
-    df = df[df[date_column] >= origin].copy()
-
-    df["period_start"] = (
-        origin
-        + pd.to_timedelta(
-            ((df[date_column] - origin).dt.days // 14) * 14,
-            unit="D",
-        )
-    )
+    df = df[df[date_column] >= ORIGIN].copy()
+    df["period_start"] = get_period_start(df[date_column])
 
     return (
         df.groupby("period_start", as_index=False)
-        .agg(
-            diesel_price=(diesel_column, "mean"),
-        )
+        .agg(diesel_price=(diesel_column, "mean"))
     )
 
 
@@ -179,47 +148,34 @@ def prepare_fertiliser(df):
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["index"] = pd.to_numeric(df["index"], errors="coerce")
 
-    df["type"] = (
-        df["type"]
-        .astype("string")
-        .str.strip()
-        .str.lower()
-    )
-
-    df["category"] = (
-        df["category"]
-        .astype("string")
-        .str.strip()
-        .str.lower()
-    )
+    for column in ["type", "category"]:
+        df[column] = df[column].astype("string").str.strip().str.lower()
 
     df = df[
         (df["type"] == "input")
         & (df["category"] == "fertilisers_and_soil_improvers")
-    ].copy()
+    ]
 
     df = (
         df.dropna(subset=["date", "index"])
-        .drop_duplicates(subset=["date"])
+        .drop_duplicates("date", keep="last")
         .sort_values("date")
     )
 
     df["available_date"] = (
         df["date"]
-        + pd.DateOffset(
-            months=FERTILISER_PUBLICATION_LAG_MONTHS
-        )
+        + pd.DateOffset(months=FERTILISER_PUBLICATION_LAG_MONTHS)
     )
 
     periods = pd.DataFrame({
         "period_start": pd.date_range(
-            start=PERIOD_ORIGIN_DATE,
-            end=pd.Timestamp.today().normalize(),
+            ORIGIN,
+            pd.Timestamp.today().normalize(),
             freq="14D",
         )
     })
 
-    fertiliser = pd.merge_asof(
+    result = pd.merge_asof(
         periods,
         df[["available_date", "index"]],
         left_on="period_start",
@@ -228,90 +184,99 @@ def prepare_fertiliser(df):
     )
 
     return (
-        fertiliser
-        .rename(columns={"index": "fertiliser_index"})
+        result.rename(columns={"index": "fertiliser_index"})
         [["period_start", "fertiliser_index"]]
         .dropna()
         .reset_index(drop=True)
     )
 
 
-def merge_processed_data(
-    prices,
-    weather,
-    diesel,
-    fertiliser,
-):
-    sources = [
-        prices,
-        weather,
-        diesel,
-        fertiliser,
+def check_external_gaps(df, columns, name):
+    complete = df[columns].notna().all(axis=1)
+
+    if not complete.any():
+        raise ValueError(f"Нет данных внешнего фактора: {name}")
+
+    last_available = df.loc[
+        complete,
+        "period_start",
+    ].max()
+
+    internal = df.loc[
+        df["period_start"] <= last_available,
+        columns,
     ]
 
-    start = max(
-        df["period_start"].min()
-        for df in sources
-    )
+    if internal.isna().any().any():
+        raise ValueError(
+            f"Во внешнем факторе '{name}' есть внутренние пропуски."
+        )
 
-    end = min(
-        df["period_start"].max()
-        for df in sources
-    )
 
+def merge_processed_data(prices, weather, diesel, fertiliser):
     periods = pd.DataFrame({
         "period_start": pd.date_range(
-            start=start,
-            end=end,
+            prices["period_start"].min(),
+            prices["period_start"].max(),
             freq="14D",
         )
     })
 
-    product_columns = [
-        "category",
-        "item",
-        "variety",
-        "unit",
-    ]
-
-    products = prices[
-        product_columns
-    ].drop_duplicates()
-
-    combined = products.merge(
-        periods,
-        how="cross",
+    products = (
+        prices[["category", *PRODUCT_KEY]]
+        .drop_duplicates(PRODUCT_KEY)
     )
 
-    combined = combined.merge(
-        prices,
-        on=product_columns + ["period_start"],
-        how="left",
+    if len(products) != len(SELECTED_PRODUCTS):
+        raise ValueError(
+            "Количество товарных позиций не соответствует настройкам."
+        )
+
+    external = (
+        periods
+        .merge(weather, on="period_start", how="left")
+        .merge(diesel, on="period_start", how="left")
+        .merge(fertiliser, on="period_start", how="left")
     )
 
-    for source in [weather, diesel, fertiliser]:
-        combined = combined.merge(
-            source,
+    check_external_gaps(
+        external,
+        [
+            "temperature_mean",
+            "temperature_min",
+            "temperature_max",
+            "precipitation_sum",
+        ],
+        "погода",
+    )
+
+    check_external_gaps(
+        external,
+        ["diesel_price"],
+        "дизель",
+    )
+
+    check_external_gaps(
+        external,
+        ["fertiliser_index"],
+        "удобрения",
+    )
+
+    result = (
+        products
+        .merge(periods, how="cross")
+        .merge(
+            prices,
+            on=["category", *PRODUCT_KEY, "period_start"],
+            how="left",
+        )
+        .merge(
+            external,
             on="period_start",
             how="left",
         )
-
-    external_columns = [
-        "temperature_mean",
-        "temperature_min",
-        "temperature_max",
-        "precipitation_sum",
-        "diesel_price",
-        "fertiliser_index",
-    ]
-
-    if combined[external_columns].isna().any().any():
-        raise ValueError(
-            "Во внешних факторах обнаружены пропуски."
-        )
-
-    return (
-        combined
-        .sort_values(["item", "period_start"])
-        .reset_index(drop=True)
     )
+
+    return result.sort_values(
+        ["item", "period_start"]
+    ).reset_index(drop=True)

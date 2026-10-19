@@ -32,9 +32,9 @@ BASIC_FEATURES = [
 ]
 
 EXTERNAL_FEATURES = [
-    "temperature_lag_1",
-    "precipitation_lag_1",
-    "diesel_lag_1",
+    "temperature_lag_2",
+    "precipitation_lag_2",
+    "diesel_lag_2",
     "fertiliser_lag_1",
 ]
 
@@ -64,9 +64,9 @@ def prepare_data(df):
         lambda x: x.shift(1).rolling(4).mean()
     )
 
-    df["temperature_lag_1"] = grouped["temperature_mean"].shift(1)
-    df["precipitation_lag_1"] = grouped["precipitation_sum"].shift(1)
-    df["diesel_lag_1"] = grouped["diesel_price"].shift(1)
+    df["temperature_lag_2"] = grouped["temperature_mean"].shift(2)
+    df["precipitation_lag_2"] = grouped["precipitation_sum"].shift(2)
+    df["diesel_lag_2"] = grouped["diesel_price"].shift(2)
     df["fertiliser_lag_1"] = grouped["fertiliser_index"].shift(1)
 
     df["month"] = df["period_start"].dt.month
@@ -120,6 +120,7 @@ def ridge_predictions(data, features):
     )
 
     model.fit(train[features], train["price"])
+
     predictions[valid.to_numpy()] = model.predict(
         test.loc[valid, features]
     )
@@ -130,8 +131,13 @@ def ridge_predictions(data, features):
 def evaluate_product(data):
     data = data.sort_values("period_start").reset_index(drop=True)
 
-    train = data[data["period_start"] < TEST_START_DATE]
-    test = data[data["period_start"] >= TEST_START_DATE].copy()
+    train = data[
+        data["period_start"] < TEST_START_DATE
+    ]
+
+    test = data[
+        data["period_start"] >= TEST_START_DATE
+    ].copy()
 
     comparison = pd.DataFrame({
         "price": test["price"].to_numpy(),
@@ -140,15 +146,15 @@ def evaluate_product(data):
 
     sarimax, converged = fit_sarimax(train["price"])
 
-    sarimax_predictions = []
+    predictions = []
 
     for actual in test["price"]:
-        sarimax_predictions.append(
+        predictions.append(
             float(sarimax.forecast(1)[0])
         )
         sarimax = sarimax.append([actual], refit=False)
 
-    comparison["SARIMAX"] = sarimax_predictions
+    comparison["SARIMAX"] = predictions
     comparison["Ridge"] = ridge_predictions(
         data,
         BASIC_FEATURES,
@@ -165,10 +171,7 @@ def evaluate_product(data):
     results = []
 
     for model_name in MODEL_NAMES:
-        errors = (
-            common["price"]
-            - common[model_name]
-        )
+        errors = common["price"] - common[model_name]
 
         results.append({
             "model": model_name,
@@ -189,14 +192,10 @@ def evaluate_models(data):
     results = []
 
     for product, product_data in data.groupby(PRODUCT_COLUMNS):
-        item, variety, unit = product
-
         for result in evaluate_product(product_data):
-            result.update({
-                "item": item,
-                "variety": variety,
-                "unit": unit,
-            })
+            result.update(
+                dict(zip(PRODUCT_COLUMNS, product))
+            )
             results.append(result)
 
     return pd.DataFrame(results)
@@ -206,16 +205,12 @@ def get_best_models(metrics):
     valid = metrics[
         (metrics["status"] == "ok")
         & metrics["MAE"].notna()
-    ].copy()
-
-    valid = valid.sort_values(
-        ["item", "MAE", "RMSE"]
-    )
+    ]
 
     return (
         valid
-        .groupby(PRODUCT_COLUMNS, as_index=False)
-        .first()
+        .sort_values(["item", "MAE", "RMSE"])
+        .drop_duplicates(PRODUCT_COLUMNS)
         .sort_values("item")
         .reset_index(drop=True)
     )
@@ -243,11 +238,7 @@ def forecast_next(data, model_name):
         if not converged:
             return np.nan, next_period, "not_converged"
 
-        return (
-            float(result.forecast(1)[0]),
-            next_period,
-            "ok",
-        )
+        return float(result.forecast(1)[0]), next_period, "ok"
 
     features = BASIC_FEATURES
 
@@ -270,9 +261,9 @@ def forecast_next(data, model_name):
             if prices.iloc[-4:].notna().all()
             else np.nan
         ),
-        "temperature_lag_1": data["temperature_mean"].iloc[-1],
-        "precipitation_lag_1": data["precipitation_sum"].iloc[-1],
-        "diesel_lag_1": data["diesel_price"].iloc[-1],
+        "temperature_lag_2": data["temperature_mean"].iloc[-2],
+        "precipitation_lag_2": data["precipitation_sum"].iloc[-2],
+        "diesel_lag_2": data["diesel_price"].iloc[-2],
         "fertiliser_lag_1": data["fertiliser_index"].iloc[-1],
         "month": next_period.month,
     }])
@@ -358,38 +349,6 @@ def external_factor_comparison(metrics):
 
     return table.round(2)
 
-def run_forecasting(df, save_results=True):
-    data, model_start = prepare_data(df)
-
-    metrics = evaluate_models(data)
-    best = get_best_models(metrics)
-    forecasts = create_forecasts(data, metrics)
-
-    if save_results:
-        MODEL_METRICS_FILE.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        metrics.to_csv(
-            MODEL_METRICS_FILE,
-            index=False,
-            encoding="utf-8-sig",
-        )
-
-        forecasts.to_csv(
-            FORECASTS_FILE,
-            index=False,
-            encoding="utf-8-sig",
-        )
-
-    return {
-        "model_start": model_start,
-        "metrics": metrics,
-        "best_models": best,
-        "forecasts": forecasts,
-    }
-
 
 if __name__ == "__main__":
     source_data = pd.read_csv(
@@ -398,7 +357,6 @@ if __name__ == "__main__":
     )
 
     data, model_start = prepare_data(source_data)
-
     metrics = evaluate_models(data)
     forecasts = create_forecasts(data, metrics)
     best = get_best_models(metrics)
@@ -454,9 +412,7 @@ if __name__ == "__main__":
 
     print("\nВлияние внешних факторов:")
     print(
-        external_factor_comparison(
-            metrics
-        ).to_string()
+        external_factor_comparison(metrics).to_string()
     )
 
     print("\nИтоговый прогноз:")

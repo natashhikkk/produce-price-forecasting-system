@@ -25,8 +25,6 @@ from src.preprocessing.preprocessing import (
     merge_processed_data,
 )
 
-from src.analysis.analysis import run_analysis
-
 from src.forecasting.forecasting import (
     TEST_START_DATE,
     prepare_data,
@@ -44,12 +42,40 @@ from src.utils.storage import update_csv
 from src.utils.load_logger import log_load
 
 
+SOURCES = {
+    "prices": (
+        "DEFRA prices",
+        load_defra_prices,
+        DEFRA_RAW_FILE,
+        ["category", "item", "variety", "date", "unit"],
+    ),
+    "weather": (
+        "Open-Meteo weather",
+        load_weather,
+        WEATHER_RAW_FILE,
+        ["time", "location"],
+    ),
+    "diesel": (
+        "Diesel prices",
+        load_diesel_prices,
+        DIESEL_RAW_FILE,
+        ["Date"],
+    ),
+    "fertiliser": (
+        "Agricultural Price Index",
+        load_agricultural_price_index,
+        FERTILISER_RAW_FILE,
+        ["type", "category", "date"],
+    ),
+}
+
+
 def run_source(name, loader, file_path, key_columns):
     try:
-        df = loader()
+        received = loader()
 
-        new_rows = update_csv(
-            df,
+        data, new_rows = update_csv(
+            received,
             file_path,
             key_columns,
         )
@@ -57,217 +83,140 @@ def run_source(name, loader, file_path, key_columns):
         log_load(
             name,
             "success",
-            len(df),
+            len(received),
             new_rows,
-            "",
         )
 
         print(
-            f"{name}: {len(df)} строк, "
-            f"новых {new_rows}"
+            f"{name}: получено {len(received)}, "
+            f"в хранилище {len(data)}, новых {new_rows}"
         )
 
-        return df
+        return data
 
     except Exception as error:
+        print(f"{name}: ошибка загрузки — {error}")
+
+        if file_path.exists():
+            try:
+                data = pd.read_csv(
+                    file_path,
+                    encoding="utf-8-sig",
+                )
+
+                log_load(
+                    name,
+                    "fallback",
+                    message=str(error),
+                )
+
+                print(
+                    f"{name}: использованы локальные данные, "
+                    f"{len(data)} строк"
+                )
+
+                return data
+
+            except Exception as local_error:
+                error = (
+                    f"{error}; локальный файл "
+                    f"не удалось прочитать: {local_error}"
+                )
+
         log_load(
             name,
             "error",
-            0,
-            0,
-            str(error),
+            message=str(error),
         )
 
-        print(
-            f"{name}: ошибка загрузки — {error}"
-        )
-
-        if file_path.exists():
-            df = pd.read_csv(
-                file_path
-            )
-
-            print(
-                f"{name}: использованы "
-                f"локальные данные, "
-                f"{len(df)} строк"
-            )
-
-            return df
+        print(f"{name}: данные недоступны")
 
         return None
 
 
-def save_analysis_dataset(df):
-    ANALYSIS_DATASET_FILE.parent.mkdir(
+def save_csv(df, file_path):
+    file_path.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     df.to_csv(
-        ANALYSIS_DATASET_FILE,
+        file_path,
         index=False,
         encoding="utf-8-sig",
     )
+
+
+def load_sources():
+    data = {}
+
+    for key, source in SOURCES.items():
+        data[key] = run_source(*source)
+
+    return data
 
 
 def main():
     print("Запуск системы")
 
     print("\nЗагрузка данных")
+    raw = load_sources()
 
-    prices_raw = run_source(
-        "DEFRA prices",
-        load_defra_prices,
-        DEFRA_RAW_FILE,
-        [
-            "category",
-            "item",
-            "variety",
-            "date",
-            "unit",
-        ],
-    )
-
-    weather_raw = run_source(
-        "Open-Meteo weather",
-        load_weather,
-        WEATHER_RAW_FILE,
-        [
-            "time",
-            "location",
-        ],
-    )
-
-    diesel_raw = run_source(
-        "Diesel prices",
-        load_diesel_prices,
-        DIESEL_RAW_FILE,
-        ["Date"],
-    )
-
-    fertiliser_raw = run_source(
-        "Agricultural Price Index",
-        load_agricultural_price_index,
-        FERTILISER_RAW_FILE,
-        [
-            "type",
-            "category",
-            "date",
-        ],
-    )
-
-    if any(
-        df is None
-        for df in [
-            prices_raw,
-            weather_raw,
-            diesel_raw,
-            fertiliser_raw,
-        ]
-    ):
+    if any(data is None for data in raw.values()):
         print(
-            "\nНе удалось получить "
-            "все необходимые данные"
+            "\nНе удалось получить все необходимые данные"
         )
         return
 
     print("\nПредобработка данных")
 
-    prices = prepare_prices(
-        prices_raw
+    dataset = merge_processed_data(
+        prepare_prices(raw["prices"]),
+        prepare_weather(raw["weather"]),
+        prepare_diesel(raw["diesel"]),
+        prepare_fertiliser(raw["fertiliser"]),
     )
 
-    weather = prepare_weather(
-        weather_raw
-    )
-
-    diesel = prepare_diesel(
-        diesel_raw
-    )
-
-    fertiliser = prepare_fertiliser(
-        fertiliser_raw
-    )
-
-    analysis_dataset = merge_processed_data(
-        prices,
-        weather,
-        diesel,
-        fertiliser,
-    )
-
-    save_analysis_dataset(
-        analysis_dataset
+    save_csv(
+        dataset,
+        ANALYSIS_DATASET_FILE,
     )
 
     print("Предобработка завершена")
-
     print(
         "Товарных позиций:",
-        analysis_dataset[
+        dataset[
             ["item", "variety", "unit"]
         ].drop_duplicates().shape[0],
     )
-
     print(
         "Двухнедельных периодов:",
-        analysis_dataset[
-            "period_start"
-        ].nunique(),
+        dataset["period_start"].nunique(),
     )
-
-    print(
-        "Размер набора:",
-        analysis_dataset.shape,
-    )
-
+    print("Размер набора:", dataset.shape)
     print(
         "Пропущенных цен:",
-        analysis_dataset[
-            "price"
-        ].isna().sum(),
+        dataset["price"].isna().sum(),
     )
-
     print(
         "Период:",
-        analysis_dataset[
-            "period_start"
-        ].min(),
+        dataset["period_start"].min(),
         "—",
-        analysis_dataset[
-            "period_start"
-        ].max(),
+        dataset["period_start"].max(),
     )
-
     print(
         "Данные сохранены:",
         ANALYSIS_DATASET_FILE,
     )
 
-    print("\nАнализ данных")
-
-    run_analysis(
-        analysis_dataset,
-        verbose=False,
-    )
-
-    print("Анализ завершён")
-
     print("\nПрогнозирование")
 
-    model_data, model_start = (
-        prepare_data(
-            analysis_dataset
-        )
+    model_data, model_start = prepare_data(
+        dataset
     )
 
     metrics = evaluate_models(
         model_data
-    )
-
-    best_models = get_best_models(
-        metrics
     )
 
     forecasts = create_forecasts(
@@ -275,30 +224,25 @@ def main():
         metrics,
     )
 
-    MODEL_METRICS_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+    best_models = get_best_models(
+        metrics
     )
 
-    metrics.to_csv(
+    save_csv(
+        metrics,
         MODEL_METRICS_FILE,
-        index=False,
-        encoding="utf-8-sig",
     )
 
-    forecasts.to_csv(
+    save_csv(
+        forecasts,
         FORECASTS_FILE,
-        index=False,
-        encoding="utf-8-sig",
     )
 
     print("Прогнозирование завершено")
-
     print(
         "Начало моделирования:",
         model_start.date(),
     )
-
     print(
         "Начало тестового периода:",
         TEST_START_DATE.date(),
@@ -311,49 +255,35 @@ def main():
         .value_counts()
         .items()
     ):
-        print(
-            f"{model}: {count}"
-        )
+        print(f"{model}: {count}")
 
     successful = (
         forecasts["status"] == "ok"
-    ).sum()
-
-    failed = (
-        forecasts["status"] != "ok"
     ).sum()
 
     print(
         "\nИтоговых прогнозов:",
         len(forecasts),
     )
-
     print(
         "Успешных:",
         successful,
     )
-
     print(
         "Ошибок:",
-        failed,
+        len(forecasts) - successful,
     )
-
     print(
         "Прогнозный период:",
-        forecasts[
-            "forecast_period_start"
-        ].min().date(),
+        forecasts["forecast_period_start"].min().date(),
         "—",
-        forecasts[
-            "forecast_period_end"
-        ].max().date(),
+        forecasts["forecast_period_end"].max().date(),
     )
 
     print(
         "\nМетрики сохранены:",
         MODEL_METRICS_FILE,
     )
-
     print(
         "Прогнозы сохранены:",
         FORECASTS_FILE,
@@ -361,32 +291,19 @@ def main():
 
     print("\nВизуализация")
 
-    general_paths, product_paths = (
-        create_all_visualizations(
-            analysis_dataset,
-            metrics,
-            forecasts,
-        )
+    general, products = create_all_visualizations(
+        dataset,
+        metrics,
+        forecasts,
     )
 
     print("Визуализация завершена")
-
-    print(
-        "Общих графиков:",
-        len(general_paths),
-    )
-
-    print(
-        "Графиков по товарам:",
-        len(product_paths),
-    )
-
+    print("Общих графиков:", len(general))
+    print("Графиков по товарам:", len(products))
     print(
         "Всего графиков:",
-        len(general_paths)
-        + len(product_paths),
+        len(general) + len(products),
     )
-
     print(
         "Графики сохранены:",
         FIGURES_DIR,
