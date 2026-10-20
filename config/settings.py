@@ -27,6 +27,8 @@ FORECASTS_FILE = (
     RESULTS_DIR / "forecasts.csv"
 )
 
+ANALYTICAL_CONCLUSIONS_FILE = RESULTS_DIR / "analytical_conclusions.csv"
+
 LOAD_LOG_FILE = (
     LOGS_DIR / "load_log.csv"
 )

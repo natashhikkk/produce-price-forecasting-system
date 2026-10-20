@@ -10,6 +10,7 @@ from config.settings import (
     ANALYSIS_DATASET_FILE,
     MODEL_METRICS_FILE,
     FORECASTS_FILE,
+    ANALYTICAL_CONCLUSIONS_FILE,
     LOAD_LOG_FILE,
 )
 from src.analysis.analysis import analyze_external_factors
@@ -38,21 +39,19 @@ CORRELATIONS = {
 
 @st.cache_data
 def load_results():
-    data = pd.read_csv(
-        ANALYSIS_DATASET_FILE,
-        parse_dates=["period_start"],
-    )
+    data = pd.read_csv(ANALYSIS_DATASET_FILE, parse_dates=["period_start"])
     metrics = pd.read_csv(MODEL_METRICS_FILE)
     forecasts = pd.read_csv(
         FORECASTS_FILE,
         parse_dates=["forecast_period_start", "forecast_period_end"],
     )
+    conclusions = pd.read_csv(ANALYTICAL_CONCLUSIONS_FILE)
     log = (
         pd.read_csv(LOAD_LOG_FILE, encoding="utf-8-sig")
         if LOAD_LOG_FILE.exists()
         else pd.DataFrame()
     )
-    return data, metrics, forecasts, log
+    return data, metrics, forecasts, conclusions, log
 
 
 def update_system():
@@ -83,7 +82,6 @@ def plot_forecast(data, forecast, period):
         history = data[data["period_start"] >= start]
 
     fig, ax = plt.subplots(figsize=(10, 5))
-
     ax.plot(
         history["period_start"],
         history["price"],
@@ -93,14 +91,13 @@ def plot_forecast(data, forecast, period):
     )
 
     if forecast["status"] == "ok":
-        latest = data.iloc[-1]
+        latest = data.dropna(subset=["price"]).iloc[-1]
 
-        if pd.notna(latest["price"]):
-            ax.plot(
-                [latest["period_start"], forecast["forecast_period_start"]],
-                [latest["price"], forecast["forecast"]],
-                linestyle="--",
-            )
+        ax.plot(
+            [latest["period_start"], forecast["forecast_period_start"]],
+            [latest["price"], forecast["forecast"]],
+            linestyle="--",
+        )
 
         ax.errorbar(
             forecast["forecast_period_start"],
@@ -122,7 +119,6 @@ def plot_forecast(data, forecast, period):
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-
     return fig
 
 
@@ -137,8 +133,7 @@ def plot_seasonality(data):
 
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(monthly.index, monthly.values, marker="o")
-    ax.set_xticks(range(1, 13))
-    ax.set_xticklabels(MONTHS)
+    ax.set_xticks(range(1, 13), MONTHS)
     ax.set(
         title="Сезонность",
         xlabel="Месяц",
@@ -146,7 +141,6 @@ def plot_seasonality(data):
     )
     ax.grid(alpha=0.3)
     fig.tight_layout()
-
     return fig
 
 
@@ -155,19 +149,10 @@ def plot_correlations(row):
     values = [row[column] for column in CORRELATIONS]
 
     fig, ax = plt.subplots(figsize=(8, 4))
+    image = ax.imshow([values], vmin=-1, vmax=1, cmap="coolwarm", aspect="auto")
 
-    image = ax.imshow(
-        [values],
-        vmin=-1,
-        vmax=1,
-        cmap="coolwarm",
-        aspect="auto",
-    )
-
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels)
-    ax.set_yticks([0])
-    ax.set_yticklabels(["Цена"])
+    ax.set_xticks(range(len(labels)), labels)
+    ax.set_yticks([0], ["Цена"])
     ax.set_title("Корреляция с внешними факторами")
 
     for i, value in enumerate(values):
@@ -176,15 +161,18 @@ def plot_correlations(row):
 
     fig.colorbar(image, ax=ax, label="Корреляция")
     fig.tight_layout()
-
     return fig
 
 
 st.title("Мониторинг и прогнозирование оптовых цен")
 st.caption("Плодоовощная продукция Англии и Уэльса")
 
-
-required = [ANALYSIS_DATASET_FILE, MODEL_METRICS_FILE, FORECASTS_FILE]
+required = [
+    ANALYSIS_DATASET_FILE,
+    MODEL_METRICS_FILE,
+    FORECASTS_FILE,
+    ANALYTICAL_CONCLUSIONS_FILE,
+]
 
 if not all(path.exists() for path in required):
     st.warning("Результаты системы ещё не сформированы.")
@@ -195,7 +183,7 @@ if not all(path.exists() for path in required):
     st.stop()
 
 
-data, metrics, forecasts, log = load_results()
+data, metrics, forecasts, conclusions, log = load_results()
 correlations = analyze_external_factors(data)
 
 
@@ -228,25 +216,25 @@ product = (
 
 forecast = forecasts[forecasts["item"] == item].iloc[0]
 product_metrics = metrics[metrics["item"] == item].copy()
+conclusion = conclusions[conclusions["item"] == item].iloc[0]
 
-latest = product.iloc[-1]
-unit = latest["unit"]
+latest = product.dropna(subset=["price"]).iloc[-1]
 latest_price = latest["price"]
-
+unit = latest["unit"]
 
 last_update = "нет данных"
 
 if not log.empty:
     dates = pd.to_datetime(log["datetime"], errors="coerce")
-
     if dates.notna().any():
         last_update = dates.max().strftime("%d.%m.%Y %H:%M")
 
 
 st.caption(
-    f"Разновидность: {latest['variety']} · Единица: {unit} · "
-    f"Последнее обновление: {last_update}"
+    f"Разновидность: {latest['variety']} · "
+    f"Единица: {unit} · Последнее обновление: {last_update}"
 )
+
 st.caption(
     "Период отображения изменяет только исторический график. "
     "Прогноз строится по всей доступной истории."
@@ -254,24 +242,24 @@ st.caption(
 
 
 if not log.empty:
-    log_data = log.copy()
-    log_data["datetime"] = pd.to_datetime(log_data["datetime"], errors="coerce")
-    latest_log = log_data.sort_values("datetime").groupby("source").tail(1)
+    log = log.copy()
+    log["datetime"] = pd.to_datetime(log["datetime"], errors="coerce")
+    latest_log = log.sort_values("datetime").groupby("source").tail(1)
 
     fallback = latest_log[latest_log["status"] == "fallback"]["source"].tolist()
     errors = latest_log[latest_log["status"] == "error"]["source"].tolist()
 
     if fallback:
         st.warning("Используются локальные данные: " + ", ".join(fallback))
-
     if errors:
         st.error("Недоступны источники: " + ", ".join(errors))
 
 
-change = None
-
-if pd.notna(latest_price) and pd.notna(forecast["forecast"]):
-    change = (forecast["forecast"] - latest_price) / latest_price * 100
+change = (
+    (forecast["forecast"] - latest_price) / latest_price * 100
+    if pd.notna(forecast["forecast"])
+    else None
+)
 
 
 st.divider()
@@ -293,23 +281,19 @@ with left:
     )
 
     interval = (
-        f"{forecast['lower_bound']:.3f} – {forecast['upper_bound']:.3f} £/{unit}"
+        f"{forecast['lower_bound']:.3f} – "
+        f"{forecast['upper_bound']:.3f} £/{unit}"
         if pd.notna(forecast["lower_bound"])
         else "—"
     )
 
-    price_text = (
-        f"{latest_price:.3f} £/{unit}"
-        if pd.notna(latest_price)
-        else "Нет данных"
-    )
-
-    change_text = f"{change:+.1f}%" if change is not None else "—"
-
     st.markdown(f"**Прогнозный интервал:** {interval}")
-    st.markdown(f"**Последняя цена:** {price_text}")
-    st.markdown(f"**Ожидаемое изменение:** {change_text}")
-
+    st.markdown(f"**Последняя цена:** {latest_price:.3f} £/{unit}")
+    st.markdown(
+        f"**Ожидаемое изменение:** {change:+.1f}%"
+        if change is not None
+        else "**Ожидаемое изменение:** —"
+    )
     st.markdown(
         f"**Модель:** {forecast['model']}  \n"
         f"MAE: {forecast['validation_MAE']:.4f} · "
@@ -320,6 +304,10 @@ with right:
     fig = plot_forecast(product, forecast, period)
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
+
+
+st.markdown("#### Аналитический вывод")
+st.write(conclusion["conclusion"])
 
 
 st.divider()
@@ -364,7 +352,7 @@ with st.expander("Данные и экспорт"):
     st.write(f"Периодов для товара: **{len(product)}**")
     st.write(f"Пропущенных цен: **{product['price'].isna().sum()}**")
 
-    d1, d2, d3 = st.columns(3)
+    d1, d2, d3, d4 = st.columns(4)
 
     d1.download_button(
         "Скачать данные",
@@ -387,5 +375,13 @@ with st.expander("Данные и экспорт"):
         metrics.to_csv(index=False).encode("utf-8-sig"),
         "model_metrics.csv",
         "text/csv",
+        use_container_width=True,
+    )
+
+    d4.download_button(
+        "Скачать вывод",
+        conclusion["conclusion"].encode("utf-8"),
+        f"{item}_analytical_conclusion.txt",
+        "text/plain",
         use_container_width=True,
     )
