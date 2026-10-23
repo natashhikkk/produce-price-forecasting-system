@@ -10,12 +10,10 @@ from config.settings import (
     FORECASTS_FILE,
     ANALYTICAL_CONCLUSIONS_FILE,
 )
-
 from src.data_loading.defra_prices import load_defra_prices
 from src.data_loading.weather_api import load_weather
 from src.data_loading.diesel_prices import load_diesel_prices
 from src.data_loading.fertiliser_index import load_agricultural_price_index
-
 from src.preprocessing.preprocessing import (
     prepare_prices,
     prepare_weather,
@@ -23,72 +21,59 @@ from src.preprocessing.preprocessing import (
     prepare_fertiliser,
     merge_processed_data,
 )
-
+from src.analysis.analysis import run_analysis
+from src.analysis.analytical_conclusions import create_analytical_conclusions
 from src.forecasting.forecasting import (
+    TEST_START_DATE,
     prepare_data,
     evaluate_models,
     get_best_models,
     create_forecasts,
 )
-
-from src.analysis.analytical_conclusions import (
-    create_analytical_conclusions,
-)
-
-from src.visualization.visualization import (
-    create_all_visualizations,
-)
-
+from src.visualization.visualization import create_all_visualizations
 from src.utils.storage import update_csv
 from src.utils.load_logger import log_load
 
 
 SOURCES = {
-    "prices": {
-        "name": "DEFRA",
-        "loader": load_defra_prices,
-        "file": DEFRA_RAW_FILE,
-        "keys": [
-            "category",
-            "item",
-            "variety",
-            "date",
-            "unit",
-        ],
-    },
-    "weather": {
-        "name": "Open-Meteo",
-        "loader": load_weather,
-        "file": WEATHER_RAW_FILE,
-        "keys": ["time", "location"],
-    },
-    "diesel": {
-        "name": "Diesel",
-        "loader": load_diesel_prices,
-        "file": DIESEL_RAW_FILE,
-        "keys": ["Date"],
-    },
-    "fertiliser": {
-        "name": "Agricultural Price Index",
-        "loader": load_agricultural_price_index,
-        "file": FERTILISER_RAW_FILE,
-        "keys": ["type", "category", "date"],
-    },
+    "prices": (
+        "DEFRA",
+        load_defra_prices,
+        DEFRA_RAW_FILE,
+        ["category", "item", "variety", "date", "unit"],
+    ),
+    "weather": (
+        "Open-Meteo",
+        load_weather,
+        WEATHER_RAW_FILE,
+        ["time", "location"],
+    ),
+    "diesel": (
+        "Diesel",
+        load_diesel_prices,
+        DIESEL_RAW_FILE,
+        ["Date"],
+    ),
+    "fertiliser": (
+        "Agricultural Price Index",
+        load_agricultural_price_index,
+        FERTILISER_RAW_FILE,
+        ["type", "category", "date"],
+    ),
+}
+
+FACTOR_NAMES = {
+    "temperature_mean_lag_2": "температура, lag 2",
+    "precipitation_sum_lag_2": "осадки, lag 2",
+    "diesel_price_lag_2": "дизель, lag 2",
+    "fertiliser_index_lag_1": "удобрения, lag 1",
 }
 
 
-def run_source(source):
-    name = source["name"]
-    file_path = source["file"]
-
+def run_source(name, loader, file_path, keys):
     try:
-        received = source["loader"]()
-
-        data, new_rows = update_csv(
-            received,
-            file_path,
-            source["keys"],
-        )
+        received = loader()
+        data, new_rows = update_csv(received, file_path, keys)
 
         log_load(
             name,
@@ -101,122 +86,147 @@ def run_source(source):
             f"{name}: {len(data)} строк "
             f"(получено {len(received)}, новых {new_rows})"
         )
-
         return data
 
     except Exception as error:
         if file_path.exists():
-            data = pd.read_csv(
-                file_path,
-                encoding="utf-8-sig",
-            )
+            try:
+                data = pd.read_csv(file_path, encoding="utf-8-sig")
+                log_load(name, "fallback", message=str(error))
 
-            log_load(
-                name,
-                "fallback",
-                message=str(error),
-            )
+                print(
+                    f"{name}: используются локальные данные "
+                    f"({len(data)} строк)"
+                )
+                return data
 
-            print(
-                f"{name}: ошибка загрузки, "
-                f"используются локальные данные "
-                f"({len(data)} строк)"
-            )
+            except Exception as local_error:
+                error = (
+                    f"{error}; локальный файл не прочитан: "
+                    f"{local_error}"
+                )
 
-            return data
-
-        log_load(
-            name,
-            "error",
-            message=str(error),
-        )
-
-        print(f"{name}: ошибка — {error}")
+        log_load(name, "error", message=str(error))
+        print(f"{name}: данные недоступны — {error}")
         return None
 
 
 def load_sources():
     return {
-        key: run_source(source)
+        key: run_source(*source)
         for key, source in SOURCES.items()
     }
 
 
 def save_csv(df, file_path):
-    file_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(file_path, index=False, encoding="utf-8-sig")
+
+
+def print_analysis_summary(results):
+    missing = results["missing"]["missing_pct"]
+    worst_item = missing.idxmax()
+
+    anomalies = int(
+        results["anomalies"]["potential_anomalies"].sum()
     )
 
-    df.to_csv(
-        file_path,
-        index=False,
-        encoding="utf-8-sig",
+    trends = results["trend"]["annual_trend_pct"].dropna()
+    correlations = results["correlations"].stack().dropna()
+
+    print("\nАнализ данных")
+    print(
+        "Общих пропущенных периодов:",
+        len(results["common_missing"]),
     )
+    print(
+        f"Наибольшая доля пропусков: "
+        f"{worst_item} — {missing[worst_item]:.2f}%"
+    )
+    print("Потенциальных аномалий по IQR:", anomalies)
+
+    if not trends.empty:
+        print(
+            f"Диапазон годового тренда: "
+            f"{trends.min():.2f}% — {trends.max():.2f}%"
+        )
+
+    if not correlations.empty:
+        item, factor = correlations.abs().idxmax()
+        value = correlations.loc[(item, factor)]
+
+        print(
+            f"Наиболее сильная корреляция: "
+            f"{item} / {FACTOR_NAMES.get(factor, factor)} "
+            f"— {value:.3f}"
+        )
+
+
+def print_forecast_summary(metrics, forecasts, model_start):
+    best = get_best_models(metrics)
+
+    print("Начало моделирования:", model_start.date())
+    print("Начало тестового периода:", TEST_START_DATE.date())
+
+    print("\nЛучшие модели:")
+    for model, count in best["model"].value_counts().items():
+        print(f"{model}: {count}")
+
+    ridge = (
+        metrics[
+            (metrics["status"] == "ok")
+            & metrics["model"].isin(["Ridge", "Ridge + external"])
+        ]
+        .pivot(index="item", columns="model", values="MAE")
+        .dropna()
+    )
+
+    improved = int(
+        (ridge["Ridge + external"] < ridge["Ridge"]).sum()
+    )
+
+    successful = forecasts[forecasts["status"] == "ok"]
+
+    print(
+        f"\nВнешние факторы улучшили Ridge "
+        f"для {improved} из {len(ridge)} товаров"
+    )
+    print(
+        f"Успешных прогнозов: "
+        f"{len(successful)} из {len(forecasts)}"
+    )
+
+    if not successful.empty:
+        start = successful["forecast_period_start"].min()
+        end = successful["forecast_period_end"].max()
+        print("Прогнозный период:", start.date(), "—", end.date())
 
 
 def main():
-    print("Загрузка данных")
+    print("Запуск системы")
 
-    sources = load_sources()
+    print("\nЗагрузка данных")
+    raw = load_sources()
 
-    if any(df is None for df in sources.values()):
-        print(
-            "\nРабота остановлена: "
-            "отсутствуют необходимые данные"
-        )
+    if any(df is None for df in raw.values()):
+        print("\nРабота остановлена: отсутствуют необходимые данные")
         return
 
     print("\nПредобработка данных")
 
-    prices = prepare_prices(
-        sources["prices"]
-    )
-
-    weather = prepare_weather(
-        sources["weather"]
-    )
-
-    diesel = prepare_diesel(
-        sources["diesel"]
-    )
-
-    fertiliser = prepare_fertiliser(
-        sources["fertiliser"]
-    )
-
     dataset = merge_processed_data(
-        prices,
-        weather,
-        diesel,
-        fertiliser,
+        prepare_prices(raw["prices"]),
+        prepare_weather(raw["weather"]),
+        prepare_diesel(raw["diesel"]),
+        prepare_fertiliser(raw["fertiliser"]),
     )
 
-    save_csv(
-        dataset,
-        ANALYSIS_DATASET_FILE,
-    )
+    save_csv(dataset, ANALYSIS_DATASET_FILE)
 
-    print(
-        "Товаров:",
-        dataset["item"].nunique(),
-    )
-
-    print(
-        "Периодов:",
-        dataset["period_start"].nunique(),
-    )
-
-    print(
-        "Строк:",
-        len(dataset),
-    )
-
-    print(
-        "Пропущенных цен:",
-        dataset["price"].isna().sum(),
-    )
-
+    print("Товаров:", dataset["item"].nunique())
+    print("Периодов:", dataset["period_start"].nunique())
+    print("Строк:", len(dataset))
+    print("Пропущенных цен:", dataset["price"].isna().sum())
     print(
         "Период:",
         dataset["period_start"].min().date(),
@@ -224,90 +234,19 @@ def main():
         dataset["period_start"].max().date(),
     )
 
+    analysis = run_analysis(dataset, verbose=False)
+    print_analysis_summary(analysis)
+
     print("\nПрогнозирование")
 
-    prepared = prepare_data(dataset)
+    model_data, model_start = prepare_data(dataset)
+    metrics = evaluate_models(model_data)
+    forecasts = create_forecasts(model_data, metrics)
 
-    if isinstance(prepared, tuple):
-        model_data = prepared[0]
+    save_csv(metrics, MODEL_METRICS_FILE)
+    save_csv(forecasts, FORECASTS_FILE)
 
-        if len(prepared) > 1:
-            model_start = prepared[1]
-            print(
-                "Начало моделирования:",
-                model_start,
-            )
-    else:
-        model_data = prepared
-
-    metrics = evaluate_models(
-        model_data
-    )
-
-    forecasts = create_forecasts(
-        model_data,
-        metrics,
-    )
-
-    save_csv(
-        metrics,
-        MODEL_METRICS_FILE,
-    )
-
-    save_csv(
-        forecasts,
-        FORECASTS_FILE,
-    )
-
-    best_models = get_best_models(
-        metrics
-    )
-
-    print("Выбранные модели:")
-
-    for model, count in (
-        best_models["model"]
-        .value_counts()
-        .items()
-    ):
-        print(
-            f"{model}: {count}"
-        )
-
-    success = (
-        forecasts["status"] == "ok"
-    ).sum()
-
-    print(
-        "Прогнозов:",
-        len(forecasts),
-    )
-
-    print(
-        "Успешно:",
-        success,
-    )
-
-    print(
-        "Ошибок:",
-        len(forecasts) - success,
-    )
-
-    successful_forecasts = forecasts[
-        forecasts["status"] == "ok"
-    ]
-
-    if not successful_forecasts.empty:
-        print(
-            "Прогнозный период:",
-            successful_forecasts[
-                "forecast_period_start"
-            ].min(),
-            "—",
-            successful_forecasts[
-                "forecast_period_end"
-            ].max(),
-        )
+    print_forecast_summary(metrics, forecasts, model_start)
 
     print("\nАналитические выводы")
 
@@ -315,46 +254,20 @@ def main():
         dataset,
         forecasts,
     )
+    save_csv(conclusions, ANALYTICAL_CONCLUSIONS_FILE)
 
-    save_csv(
-        conclusions,
-        ANALYTICAL_CONCLUSIONS_FILE,
-    )
-
-    print(
-        "Сформировано выводов:",
-        len(conclusions),
-    )
+    print("Сформировано выводов:", len(conclusions))
 
     print("\nВизуализация")
 
-    general_figures, product_figures = (
-        create_all_visualizations(
-            dataset,
-            metrics,
-            forecasts,
-        )
+    general, products = create_all_visualizations(
+        dataset,
+        metrics,
+        forecasts,
     )
 
-    print(
-        "Общих графиков:",
-        len(general_figures),
-    )
-
-    print(
-        "Графиков по товарам:",
-        len(product_figures),
-    )
-
-    print(
-        "Всего графиков:",
-        len(general_figures)
-        + len(product_figures),
-    )
-
-    print(
-        "\nРабота системы завершена успешно"
-    )
+    print("Сформировано графиков:", len(general) + len(products))
+    print("\nРабота системы завершена успешно")
 
 
 if __name__ == "__main__":
